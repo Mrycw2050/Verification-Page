@@ -47,7 +47,7 @@ button{font:inherit; cursor:pointer}
 .status{display:flex; gap:14px; align-items:flex-start; padding:20px 24px; border-bottom:1px solid var(--line); color:var(--muted); background:var(--ph-bg)}
 .card[data-status="verified"] .status{color:var(--ok); background:var(--ok-bg)}
 .card[data-status="expired"] .status{color:var(--wait); background:var(--wait-bg)}
-.card[data-status="revoked"] .status,.card[data-status="notfound"] .status{color:var(--bad); background:var(--bad-bg)}
+.card[data-status="revoked"] .status,.card[data-status="notfound"] .status,.card[data-status="error"] .status{color:var(--bad); background:var(--bad-bg)}
 .icon{flex:none; width:36px; height:36px; border-radius:50%; background:currentColor; display:grid; place-items:center}
 .icon svg{width:20px; height:20px; stroke:var(--surface); fill:none; stroke-width:2.5; stroke-linecap:round; stroke-linejoin:round}
 h1{margin:0; font-size:1.3rem; line-height:1.25; font-weight:600; color:var(--ink)}
@@ -75,10 +75,9 @@ dd{margin:0; font-weight:500; overflow-wrap:anywhere}
 
   <div class="lookup">
     <label for="ref">Reference number</label>
-    <input id="ref" type="text" placeholder="Enter reference number" autocomplete="off" autocapitalize="characters" spellcheck="false">
+    <input id="ref" type="text" placeholder="Enter reference number" autocomplete="off" spellcheck="false">
     <button class="go" id="go" type="button">Verify</button>
   </div>
-  <p class="hint">Try a sample: <span id="samples"></span></p>
 
   <section class="card" id="card" data-status="idle" data-kind="Certificate" aria-live="polite">
     <div class="status">
@@ -102,29 +101,33 @@ dd{margin:0; font-weight:500; overflow-wrap:anywhere}
   </section>
 </main>
 
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.js"></script>
 <script>
 /* ===== Edit this block to reuse the template ===== */
 var CONFIG = {
   orgName: "Northfield Institute",
   supportEmail: "verify@example.com",
-  /* type: "Certificate" or "ID card". status: "active" or "revoked". Dates: YYYY-MM-DD, or "" for no expiry. */
-  records: [
-    {ref:"CERT-2025-0142", title:"Advanced Project Management", type:"Certificate", holder:"Amara Okafor", org:"Northfield Institute", issued:"2025-03-14", expires:"2028-03-14", status:"active"},
-    {ref:"ID-88-4521", title:"Staff identification card", type:"ID card", holder:"Daniel Reyes", org:"Northfield Institute", issued:"2026-01-08", expires:"2029-01-08", status:"active"},
-    {ref:"CERT-2022-0031", title:"Food Safety Level 2", type:"Certificate", holder:"Priya Nair", org:"Northfield Institute", issued:"2022-05-02", expires:"2024-05-02", status:"active"},
-    {ref:"CERT-2024-0310", title:"First Aid at Work", type:"Certificate", holder:"Lena Fischer", org:"Northfield Institute", issued:"2024-09-20", expires:"", status:"revoked"}
-  ]
+  supabaseUrl: "YOUR_SUPABASE_URL",          /* e.g. https://abcdxyz.supabase.co */
+  supabaseAnonKey: "YOUR_SUPABASE_ANON_KEY", /* the public anon key, never the service_role key */
+  table: "Certificate",                      /* table names are case-sensitive */
+  /* Left: what this page calls the field. Right: your column name in Supabase. */
+  columns: {
+    ref:"reference_number", title:"document_title", type:"document_type", holder:"holder_name",
+    org:"issuing_organization", issued:"issue_date", expires:"expiry_date", status:"status"
+  }
 };
 /* ================================================= */
 
 var $ = function(id){ return document.getElementById(id); };
-var ICON = {idle:"M12 7v6M12 17h.01", verified:"M5 12.5l4.5 4.5L19 7.5", expired:"M12 6v6l4 2", revoked:"M7 7l10 10M17 7L7 17", notfound:"M7 7l10 10M17 7L7 17"};
+var ICON = {idle:"M12 7v6M12 17h.01", verified:"M5 12.5l4.5 4.5L19 7.5", expired:"M12 6v6l4 2", revoked:"M7 7l10 10M17 7L7 17", notfound:"M7 7l10 10M17 7L7 17", loading:"M12 6v6l4 2", error:"M12 7v6M12 17h.01"};
 var COPY = {
   idle:["Enter a reference number","Details and verification status appear here."],
   verified:["Document verified","This document is authentic and matches our records."],
   expired:["Document expired","This document is authentic, but it is past its expiry date."],
   revoked:["Document revoked","The issuer has withdrawn this document. Do not accept it."],
-  notfound:["No record found","Check the reference number and try again."]
+  notfound:["No record found","Check the reference number and try again."],
+  loading:["Checking…","Looking up this reference number."],
+  error:["Couldn’t complete the check","The records service isn’t reachable right now. Please try again shortly."]
 };
 var PH = {title:"[Document Title]", type:"[Document Type]", ref:"[Reference Number]", holder:"[Holder Name]", org:"[Issuing Organization]", issued:"[Issue Date]", expires:"[Expiry Date]"};
 
@@ -158,22 +161,47 @@ function render(r, state){
   put("f-expires", r.ref ? (fmt(r.expires) || "No expiry") : null, PH.expires);
   $("av").textContent = r.holder ? r.holder.split(/\s+/).map(function(w){return w[0];}).slice(0,2).join("").toUpperCase() : "?";
 }
-function verify(q){
-  q = (q || "").trim().toUpperCase();
+var C = CONFIG.columns, seq = 0, db = null;
+try{
+  if(CONFIG.supabaseUrl.indexOf("YOUR_") !== 0 && CONFIG.supabaseAnonKey.indexOf("YOUR_") !== 0){
+    db = window.supabase.createClient(CONFIG.supabaseUrl, CONFIG.supabaseAnonKey);
+  }
+}catch(e){ console.error(e); }
+
+function toRecord(row){
+  var day = function(v){ return v ? String(v).slice(0,10) : ""; };
+  return {
+    ref: row[C.ref], title: row[C.title], type: row[C.type], holder: row[C.holder], org: row[C.org],
+    issued: day(row[C.issued]), expires: day(row[C.expires]),
+    status: String(row[C.status] || "active").toLowerCase()
+  };
+}
+async function verify(q){
+  q = (q || "").trim();
   if(!q){ render(null, "idle"); return; }
-  var r = CONFIG.records.filter(function(x){ return x.ref.toUpperCase() === q; })[0];
-  render(r || null, statusOf(r));
-  if(!r){ put("f-ref", q, PH.ref); }
-  try{ history.replaceState(null, "", "#" + encodeURIComponent(q)); }catch(e){}
+  var mine = ++seq;
+  $("go").disabled = true;
+  render(null, "loading");
+  try{
+    if(!db) throw new Error("Supabase is not configured. Set supabaseUrl and supabaseAnonKey in CONFIG.");
+    var res = await db.from(CONFIG.table).select("*").eq(C.ref, q).maybeSingle();
+    if(mine !== seq) return;
+    if(res.error) throw res.error;
+    var r = res.data ? toRecord(res.data) : null;
+    render(r, statusOf(r));
+    if(!r) put("f-ref", q, PH.ref);
+    try{ history.replaceState(null, "", "#" + encodeURIComponent(q)); }catch(e){}
+  }catch(err){
+    if(mine !== seq) return;
+    console.error(err);
+    render(null, "error");
+  }finally{
+    if(mine === seq) $("go").disabled = false;
+  }
 }
 
 $("org").textContent = CONFIG.orgName;
 $("mail").textContent = CONFIG.supportEmail; $("mail").href = "mailto:" + CONFIG.supportEmail;
-CONFIG.records.forEach(function(r){
-  var b = document.createElement("button"); b.type = "button"; b.className = "chip"; b.textContent = r.ref;
-  b.onclick = function(){ $("ref").value = r.ref; verify(r.ref); };
-  $("samples").appendChild(b); $("samples").appendChild(document.createTextNode(" "));
-});
 $("go").onclick = function(){ verify($("ref").value); };
 $("ref").addEventListener("keydown", function(e){ if(e.key === "Enter") verify($("ref").value); });
 
