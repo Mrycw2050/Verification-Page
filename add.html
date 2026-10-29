@@ -1,0 +1,123 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="robots" content="noindex,nofollow">
+<title>Add Document – DocuTrust Admin</title>
+<link rel="stylesheet" href="admin.css">
+</head>
+<body>
+<div id="login"></div>
+<div id="app" hidden>
+<header><div class="bar">
+<div class="logo">🛡️ DocuTrust Admin</div>
+<nav>
+<a href="admin.html">Dashboard</a>
+<a href="add.html" class="on">Add Document</a>
+<a href="index.html">View Site</a>
+<span class="muted" id="who"></span>
+<button id="out">Log out</button>
+</nav></div></header>
+<main>
+<div class="card" style="max-width:640px;margin:auto">
+<h2 id="ttl">Add new document</h2>
+<p class="muted">Fill in the details. The Document ID is what people will use to verify.</p>
+
+<label for="doc_id">Document ID</label>
+<div style="display:flex;gap:8px">
+<input id="doc_id" placeholder="e.g. DT-2026-1001" maxlength="40" autocomplete="off">
+<button class="btn ghost" id="gen" type="button" style="white-space:nowrap">Generate</button>
+</div>
+
+<label for="holder">Holder name</label>
+<input id="holder" placeholder="Full name" maxlength="120">
+
+<label for="dtype">Document type</label>
+<input id="dtype" list="types" placeholder="Certificate, ID Card, Marksheet…" maxlength="60">
+<datalist id="types"><option value="Certificate"><option value="Marksheet"><option value="ID Card"><option value="Degree"><option value="License"></datalist>
+
+<div class="row2">
+<div><label for="issue">Issue date</label><input id="issue" type="date"></div>
+<div><label for="expiry">Expiry date</label><input id="expiry" type="date"></div>
+</div>
+
+<label for="status">Status</label>
+<select id="status"><option value="active">Active</option><option value="revoked">Revoked</option></select>
+
+<label for="img">Certificate / ID image (optional)</label>
+<input id="img" type="file" accept="image/png,image/jpeg,image/webp">
+<p class="muted" style="margin:6px 0 0">JPG, PNG or WebP, max 2 MB.</p>
+<img id="prev" class="prev" alt="Preview" hidden>
+<label id="rmw" hidden style="font-weight:400"><input type="checkbox" id="rm"> Remove current image</label>
+
+<p style="margin-top:32px"><button class="btn" id="save">Save document</button></p>
+<div class="msg" id="m"></div>
+</div>
+</main>
+</div>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.min.js"></script>
+<script src="config.js"></script>
+<script src="admin-common.js"></script>
+<script>
+var editId=new URLSearchParams(location.search).get("edit"),cur=null;
+function safeUrl(u){return /^https:\/\//i.test(u||"")?u:""}
+function showPrev(u){var p=$("prev");if(u){p.src=u;p.hidden=false}else{p.hidden=true}}
+$("gen").onclick=function(){
+  $("doc_id").value="DT-"+new Date().getFullYear()+"-"+String(Math.floor(1000+Math.random()*9000));
+};
+$("img").onchange=function(){
+  var f=this.files[0];
+  if(f)showPrev(URL.createObjectURL(f));else showPrev(cur?safeUrl(cur.image_url):"");
+};
+async function ready(){
+  if(!editId)return;
+  var r=await sb.from("documents").select("*").eq("doc_id",editId).maybeSingle();
+  if(r.error||!r.data){say($("m"),"Document not found.",false);return}
+  cur=r.data;
+  $("ttl").textContent="Edit document";
+  $("doc_id").value=cur.doc_id;$("holder").value=cur.holder_name;$("dtype").value=cur.doc_type;
+  $("issue").value=cur.issue_date;$("expiry").value=cur.expiry_date;$("status").value=cur.status;
+  if(cur.image_url){showPrev(safeUrl(cur.image_url));$("rmw").hidden=false}
+}
+$("save").onclick=async function(){
+  var m=$("m"),b=$("save");
+  var doc_id=$("doc_id").value.trim().toUpperCase(),holder=$("holder").value.trim(),dtype=$("dtype").value.trim(),
+      issue=$("issue").value,expiry=$("expiry").value,status=$("status").value,f=$("img").files[0];
+  if(!/^[A-Z0-9._\-\/]{3,40}$/.test(doc_id))return say(m,"Document ID must be 3–40 characters: letters, numbers, . _ - /",false);
+  if(!holder)return say(m,"Please enter the holder name.",false);
+  if(!dtype)return say(m,"Please enter the document type.",false);
+  if(!issue||!expiry)return say(m,"Please select issue and expiry dates.",false);
+  if(expiry<issue)return say(m,"Expiry date cannot be before the issue date.",false);
+  b.disabled=true;m.className="msg";
+  try{
+    var image_url=cur?cur.image_url:null;
+    if(cur&&$("rm").checked&&!f)image_url=null;
+    if(f){
+      var ext={"image/jpeg":"jpg","image/png":"png","image/webp":"webp"}[f.type];
+      if(!ext)throw new Error("Only JPG, PNG or WebP images are allowed.");
+      if(f.size>2*1024*1024)throw new Error("Image must be 2 MB or smaller.");
+      var path=crypto.randomUUID()+"."+ext;
+      var up=await sb.storage.from("document-images").upload(path,f,{contentType:f.type,upsert:false});
+      if(up.error)throw new Error("Image upload failed: "+up.error.message);
+      image_url=sb.storage.from("document-images").getPublicUrl(path).data.publicUrl;
+    }
+    var payload={doc_id:doc_id,holder_name:holder,doc_type:dtype,issue_date:issue,expiry_date:expiry,status:status,image_url:image_url};
+    var res=cur?await sb.from("documents").update(payload).eq("id",cur.id):await sb.from("documents").insert(payload);
+    if(res.error){
+      if(res.error.code==="23505")throw new Error("This Document ID already exists.");
+      throw new Error(res.error.message);
+    }
+    var link=new URL("index.html?id="+encodeURIComponent(doc_id),location.href).href;
+    say(m,(cur?"Updated! ":"Saved! ")+"Verification link: "+link,true);
+    if(!cur){
+      ["doc_id","holder","dtype","issue","expiry","img"].forEach(function(k){$(k).value=""});
+      $("status").value="active";showPrev("");
+    }else{cur=Object.assign(cur,payload);$("rm").checked=false;$("img").value=""}
+  }catch(e){say(m,e.message,false)}
+  b.disabled=false;
+};
+initAdmin(ready);
+</script>
+</body>
+</html>
