@@ -1,0 +1,96 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="robots" content="noindex,nofollow">
+<title>Admin – DocuTrust</title>
+<link rel="stylesheet" href="admin.css">
+</head>
+<body>
+<div id="login"></div>
+<div id="app" hidden>
+<header><div class="bar">
+<div class="logo">🛡️ DocuTrust Admin</div>
+<nav>
+<a href="admin.html" class="on">Dashboard</a>
+<a href="add.html">Add Document</a>
+<a href="index.html">View Site</a>
+<span class="muted" id="who"></span>
+<button id="out">Log out</button>
+</nav></div></header>
+<main>
+<div class="stats">
+<div class="stat"><b id="s-all">0</b><span>Total</span></div>
+<div class="stat"><b id="s-act">0</b><span>Valid</span></div>
+<div class="stat"><b id="s-exp">0</b><span>Expired</span></div>
+<div class="stat"><b id="s-rev">0</b><span>Revoked</span></div>
+</div>
+<div class="card">
+<div class="row2" style="align-items:end">
+<div><label for="q" style="margin-top:0">Search</label><input id="q" placeholder="Search by ID, name or type"></div>
+<div style="text-align:right"><a class="btn" href="add.html" style="text-decoration:none;display:inline-block">+ Add Document</a></div>
+</div>
+<div class="msg" id="m"></div>
+<div class="wrap" style="margin-top:14px"><table>
+<thead><tr><th>ID</th><th>Name</th><th>Type</th><th>Issued</th><th>Expires</th><th>Status</th><th>Actions</th></tr></thead>
+<tbody id="rows"><tr><td colspan="7" class="muted">Loading…</td></tr></tbody>
+</table></div>
+</div>
+</main>
+</div>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.min.js"></script>
+<script src="config.js"></script>
+<script src="admin-common.js"></script>
+<script>
+var all=[];
+function state(d){
+  if(d.status==="revoked") return "rev";
+  if(new Date(d.expiry_date+"T23:59:59")<new Date()) return "exp";
+  return "ok";
+}
+function render(){
+  var q=$("q").value.trim().toLowerCase();
+  var list=all.filter(function(d){return !q||(d.doc_id+" "+d.holder_name+" "+d.doc_type).toLowerCase().indexOf(q)>-1});
+  var c={ok:0,exp:0,rev:0};
+  all.forEach(function(d){c[state(d)]++});
+  $("s-all").textContent=all.length;$("s-act").textContent=c.ok;$("s-exp").textContent=c.exp;$("s-rev").textContent=c.rev;
+  if(!list.length){$("rows").innerHTML='<tr><td colspan="7" class="muted">No documents found.</td></tr>';return}
+  $("rows").innerHTML=list.map(function(d){
+    var s=state(d),lbl={ok:"Valid",exp:"Expired",rev:"Revoked"}[s];
+    return '<tr><td><b>'+esc(d.doc_id)+'</b></td><td>'+esc(d.holder_name)+'</td><td>'+esc(d.doc_type)+'</td><td>'+fmt(d.issue_date)+'</td><td>'+fmt(d.expiry_date)+'</td>'
+    +'<td><span class="tag '+s+'">'+lbl+'</span></td><td><div class="acts">'
+    +'<a class="btn sm ghost" style="text-decoration:none" href="add.html?edit='+encodeURIComponent(d.doc_id)+'">Edit</a>'
+    +'<button class="btn sm ghost" data-a="link" data-i="'+esc(d.id)+'">Copy link</button>'
+    +'<button class="btn sm ghost" data-a="tog" data-i="'+esc(d.id)+'">'+(d.status==="revoked"?"Activate":"Revoke")+'</button>'
+    +'<button class="btn sm danger" data-a="del" data-i="'+esc(d.id)+'">Delete</button>'
+    +'</div></td></tr>';
+  }).join("");
+}
+async function load(){
+  var r=await sb.from("documents").select("*").order("created_at",{ascending:false}).limit(1000);
+  if(r.error){say($("m"),"Could not load documents: "+r.error.message,false);return}
+  all=r.data;render();
+}
+$("rows").addEventListener("click",async function(e){
+  var b=e.target.closest("button[data-a]");if(!b)return;
+  var d=all.find(function(x){return x.id===b.dataset.i});if(!d)return;
+  var a=b.dataset.a;
+  if(a==="link"){
+    var url=new URL("index.html?id="+encodeURIComponent(d.doc_id),location.href).href;
+    try{await navigator.clipboard.writeText(url);say($("m"),"Link copied: "+url,true)}catch(x){say($("m"),url,true)}
+  }else if(a==="tog"){
+    var ns=d.status==="revoked"?"active":"revoked";
+    var r=await sb.from("documents").update({status:ns}).eq("id",d.id);
+    if(r.error)say($("m"),r.error.message,false);else{d.status=ns;render()}
+  }else if(a==="del"){
+    if(!confirm("Delete "+d.doc_id+" permanently?"))return;
+    var r2=await sb.from("documents").delete().eq("id",d.id);
+    if(r2.error)say($("m"),r2.error.message,false);else{all=all.filter(function(x){return x.id!==d.id});render();say($("m"),"Deleted "+d.doc_id,true)}
+  }
+});
+$("q").addEventListener("input",render);
+initAdmin(load);
+</script>
+</body>
+</html>
