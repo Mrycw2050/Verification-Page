@@ -1,0 +1,185 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>DocuTrust – Document QR codes</title>
+
+<!-- 1. QR library (add once to your admin layout) -->
+<script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
+
+<style>
+  :root { --bg:#f6f7f9; --card:#fff; --ink:#1c2430; --muted:#667085; --line:#e3e6eb; --accent:#1f5eff; }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg:#12161c; --card:#1a2029; --ink:#e8ebf0; --muted:#98a2b3; --line:#2b3340; --accent:#6c9bff; }
+  }
+  * { box-sizing: border-box; }
+  body { margin:0; padding:24px 16px; background:var(--bg); color:var(--ink);
+         font:15px/1.5 system-ui,-apple-system,"Segoe UI",sans-serif; }
+  h1 { font-size:20px; margin:0 0 16px; }
+  .table-wrap { overflow-x:auto; background:var(--card); border:1px solid var(--line); border-radius:8px; }
+  table { width:100%; border-collapse:collapse; min-width:620px; }
+  th, td { padding:12px 14px; text-align:left; border-bottom:1px solid var(--line); vertical-align:middle; }
+  th { font-weight:600; color:var(--muted); font-size:13px; }
+  tr:last-child td { border-bottom:0; }
+  .qr-cell { width:96px; }
+  .qr-box { width:80px; height:80px; padding:4px; background:#fff; border:1px solid var(--line); border-radius:4px; cursor:zoom-in; }
+  .qr-box img, .qr-box canvas { width:100% !important; height:100% !important; display:block; }
+  button { font:inherit; padding:6px 10px; border:1px solid var(--line); background:var(--card);
+           color:var(--ink); border-radius:6px; cursor:pointer; }
+  button:hover { border-color:var(--accent); color:var(--accent); }
+  button:focus-visible { outline:2px solid var(--accent); outline-offset:2px; }
+  .actions { display:flex; gap:6px; flex-wrap:wrap; }
+  dialog { border:1px solid var(--line); border-radius:10px; background:var(--card); color:var(--ink); padding:20px; text-align:center; }
+  dialog::backdrop { background:rgba(0,0,0,.5); }
+  #modal-qr { width:280px; height:280px; margin:12px auto; padding:10px; background:#fff; }
+  #modal-qr img, #modal-qr canvas { width:100% !important; height:100% !important; }
+  .url { font-size:12px; color:var(--muted); word-break:break-all; max-width:300px; margin:0 auto 12px; }
+</style>
+</head>
+<body>
+
+<h1>Documents</h1>
+
+<!-- 2. Your document table. Add a QR cell + actions to each row.
+        data-doc-id is the only thing the script needs. -->
+<div class="table-wrap">
+  <table id="doc-table">
+    <thead>
+      <tr><th>QR</th><th>Document</th><th>Status</th><th>Actions</th></tr>
+    </thead>
+    <tbody>
+      <tr data-doc-id="DT-2026-0001" data-doc-name="Diploma – A. Rivera">
+        <td class="qr-cell"><div class="qr-box"></div></td>
+        <td>Diploma – A. Rivera</td><td>Verified</td>
+        <td class="actions"></td>
+      </tr>
+      <tr data-doc-id="DT-2026-0002" data-doc-name="Contract – Northwind">
+        <td class="qr-cell"><div class="qr-box"></div></td>
+        <td>Contract – Northwind</td><td>Pending</td>
+        <td class="actions"></td>
+      </tr>
+      <tr data-doc-id="DT-2026-0003" data-doc-name="Certificate – B. Okafor">
+        <td class="qr-cell"><div class="qr-box"></div></td>
+        <td>Certificate – B. Okafor</td><td>Verified</td>
+        <td class="actions"></td>
+      </tr>
+    </tbody>
+  </table>
+</div>
+
+<!-- Enlarged view (for scanning from a screen or printing) -->
+<dialog id="qr-modal">
+  <strong id="modal-title"></strong>
+  <div id="modal-qr"></div>
+  <p class="url" id="modal-url"></p>
+  <div class="actions" style="justify-content:center">
+    <button type="button" id="modal-print">Print</button>
+    <button type="button" id="modal-close">Close</button>
+  </div>
+</dialog>
+
+<script>
+/* ---------- 3. Configuration: change these two lines ---------- */
+const VERIFY_BASE_URL = "https://docutrust.example.com/verify"; // your public verification page
+const buildVerifyUrl = (docId) => `${VERIFY_BASE_URL}/${encodeURIComponent(docId)}`;
+// If you use query strings instead: `${VERIFY_BASE_URL}?id=${encodeURIComponent(docId)}`
+
+/* ---------- QR helpers ---------- */
+function renderQR(container, text, size = 160) {
+  container.innerHTML = "";
+  new QRCode(container, {
+    text,
+    width: size,
+    height: size,
+    colorDark: "#000000",
+    colorLight: "#ffffff",
+    correctLevel: QRCode.CorrectLevel.M   // medium error correction: scans well even if printed small
+  });
+}
+
+function qrDataUrl(text, size = 512) {
+  const tmp = document.createElement("div");
+  new QRCode(tmp, { text, width: size, height: size, correctLevel: QRCode.CorrectLevel.M });
+  const canvas = tmp.querySelector("canvas");
+  return canvas ? canvas.toDataURL("image/png") : tmp.querySelector("img").src;
+}
+
+function downloadQR(docId) {
+  const a = document.createElement("a");
+  a.href = qrDataUrl(buildVerifyUrl(docId));
+  a.download = `docutrust-${docId}.png`;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+}
+
+async function copyLink(docId, btn) {
+  const url = buildVerifyUrl(docId);
+  try {
+    await navigator.clipboard.writeText(url);
+    btn.textContent = "Copied";
+  } catch {
+    window.prompt("Copy this link:", url);
+  }
+  setTimeout(() => (btn.textContent = "Copy link"), 1500);
+}
+
+/* ---------- Modal ---------- */
+const modal = document.getElementById("qr-modal");
+function openModal(docId, name) {
+  const url = buildVerifyUrl(docId);
+  document.getElementById("modal-title").textContent = name || docId;
+  document.getElementById("modal-url").textContent = url;
+  renderQR(document.getElementById("modal-qr"), url, 260);
+  modal.showModal();
+}
+document.getElementById("modal-close").onclick = () => modal.close();
+document.getElementById("modal-print").onclick = () => {
+  const w = window.open("", "_blank", "width=420,height=520");
+  w.document.write(
+    `<title>${document.getElementById("modal-title").textContent}</title>
+     <body style="font-family:sans-serif;text-align:center;padding:24px">
+     <h3>${document.getElementById("modal-title").textContent}</h3>
+     <img src="${qrDataUrl(document.getElementById("modal-url").textContent, 400)}" width="300" height="300">
+     <p style="font-size:12px;word-break:break-all">${document.getElementById("modal-url").textContent}</p>
+     <script>onload=()=>print()<\/script></body>`
+  );
+  w.document.close();
+};
+
+/* ---------- Attach a QR to every document row ---------- */
+function initDocumentQRs(root = document) {
+  root.querySelectorAll("tr[data-doc-id]").forEach((row) => {
+    if (row.dataset.qrReady) return;          // safe to call again after the table reloads
+    row.dataset.qrReady = "1";
+
+    const docId = row.dataset.docId;
+    const name = row.dataset.docName;
+    const box = row.querySelector(".qr-box");
+    const actions = row.querySelector(".actions");
+
+    renderQR(box, buildVerifyUrl(docId), 160);
+    box.title = "Click to enlarge";
+    box.addEventListener("click", () => openModal(docId, name));
+
+    const mk = (label, fn) => {
+      const b = document.createElement("button");
+      b.type = "button";
+      b.textContent = label;
+      b.addEventListener("click", () => fn(b));
+      return b;
+    };
+    actions.append(
+      mk("Enlarge", () => openModal(docId, name)),
+      mk("Download", () => downloadQR(docId)),
+      mk("Copy link", (b) => copyLink(docId, b))
+    );
+  });
+}
+
+document.addEventListener("DOMContentLoaded", () => initDocumentQRs());
+// If your admin panel loads rows dynamically (fetch/AJAX/React), call initDocumentQRs() after rendering.
+</script>
+</body>
+</html>
